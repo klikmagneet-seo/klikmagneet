@@ -1,0 +1,132 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id                      String                   @id @default(cuid())
+  name                    String
+  industry                String?
+  createdAt               DateTime                 @default(now())
+  documents               Document[]
+  brandSettings           BrandSettings?
+  styleExamples           StyleExample[]
+  searchConsoleConnection SearchConsoleConnection?
+  searchPerformance       SearchPerformance[]
+}
+
+model SearchConsoleConnection {
+  id           String    @id @default(cuid())
+  clientId     String    @unique
+  client       Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  siteUrl      String
+  accessToken  String
+  refreshToken String
+  tokenExpiry  DateTime
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model SearchPerformance {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date        String   // YYYY-MM-DD
+  pageUrl     String
+  query       String
+  clicks      Int      @default(0)
+  impressions Int      @default(0)
+  ctr         Float    @default(0)
+  position    Float    @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model BrandSettings {
+  id             String   @id @default(cuid())
+  clientId       String   @unique
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  toneOfVoice    String   @default("")
+  preferredWords String   @default("[]")  // JSON array stored as string
+  forbiddenWords String   @default("[]")  // JSON array stored as string
+  styleRules     String   @default("")
+  updatedAt      DateTime @updatedAt
+}
+
+model StyleExample {
+  id             String   @id @default(cuid())
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title          String
+  content        String
+  aiStyleSummary String?
+  createdAt      DateTime @default(now())
+}
+
+model Document {
+  id            String    @id @default(cuid())
+  title         String    @default("")
+  targetKeyword String
+  brief         String?
+  content       String    @default("")
+  status        String    @default("draft")
+  clientId      String
+  client        Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  versions      DocumentVersion[]
+  reviewLinks   ReviewLink[]
+  comments      Comment[]
+}
+
+model DocumentVersion {
+  id            String    @id @default(cuid())
+  documentId    String
+  document      Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content       String
+  versionNumber Int
+  createdAt     DateTime  @default(now())
+}
+
+model ReviewLink {
+  id         String    @id @default(cuid())
+  documentId String
+  document   Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  token      String    @unique
+  expiresAt  DateTime?
+  revoked    Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  comments   Comment[]
+}
+
+model Comment {
+  id           String      @id @default(cuid())
+  documentId   String
+  document     Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  reviewLinkId String?
+  reviewLink   ReviewLink? @relation(fields: [reviewLinkId], references: [id])
+  startOffset  Int
+  endOffset    Int
+  selectedText String
+  commentText  String
+  authorName   String?
+  status       String      @default("open")
+  createdAt    DateTime    @default(now())
+  aiRevisions  AiRevision[]
+}
+
+model AiRevision {
+  id           String   @id @default(cuid())
+  commentId    String
+  comment      Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  originalText String
+  proposedText String
+  status       String   @default("pending")
+  createdAt    DateTime @default(now())
+}
