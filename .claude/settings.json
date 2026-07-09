@@ -23,7 +23,8 @@
       "Bash(mkdir -p \"c:\\\\Users\\\\Maxim\\\\Klikmagneet\\\\src\\\\app\\\\api\\\\clients\\\\[clientId]\\\\gsc\\\\status\")",
       "Bash(mkdir -p \"c:\\\\Users\\\\Maxim\\\\Klikmagneet\\\\src\\\\app\\\\api\\\\clients\\\\[clientId]\\\\gsc\\\\sync\")",
       "Bash(mkdir -p \"c:\\\\Users\\\\Maxim\\\\Klikmagneet\\\\src\\\\app\\\\api\\\\clients\\\\[clientId]\\\\gsc\\\\data\")",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('hex'\\)\\)\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\Maxim\\.claude\\projects\\c--Users-Maxim-Klikmagneet",

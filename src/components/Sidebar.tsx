@@ -70,9 +70,16 @@ const navItems = [
   },
 ];
 
+async function handleLogout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  window.location.href = "/login";
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
   const { selectedClient } = useClientContext();
+
+  if (pathname === "/login" || pathname.startsWith("/review")) return null;
 
   return (
     <aside className="w-64 bg-[#1e1e2e] flex flex-col h-full flex-shrink-0">
@@ -160,10 +167,17 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-6 py-4 border-t border-[#2a2a3e]">
-        <p className="text-[#a0a0b8] text-xs">
-          Powered by Claude AI
-        </p>
+      <div className="px-4 py-4 border-t border-[#2a2a3e] space-y-2">
+        <p className="text-[#5a5a7a] text-xs px-2">Powered by Claude AI</p>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[#a0a0b8] hover:bg-[#2a2a3e] hover:text-white transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          Uitloggen
+        </button>
       </div>
     </aside>
   );
