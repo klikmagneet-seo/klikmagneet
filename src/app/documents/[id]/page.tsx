@@ -97,8 +97,10 @@ export default function DocumentEditor() {
   const [lengthOption, setLengthOption] = useState<LengthOption>("medium");
   const [rewriteLength, setRewriteLength] = useState<RewriteLength>("same");
 
-  // Rewrite mode
+  // Rewrite / import mode
+  type PasteMode = "rewrite" | "import";
   const [showRewrite, setShowRewrite] = useState(false);
+  const [pasteMode, setPasteMode] = useState<PasteMode>("rewrite");
   const [rewriteText, setRewriteText] = useState("");
   const [rewriteError, setRewriteError] = useState<string | null>(null);
 
@@ -652,57 +654,102 @@ export default function DocumentEditor() {
         )}
       </div>
 
-      {/* Rewrite panel */}
+      {/* Rewrite / import panel */}
       {showRewrite && (
         <div className="bg-amber-50 border-b border-amber-200 px-6 py-4">
           <div className="max-w-4xl">
+            {/* Mode toggle */}
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex bg-amber-100 rounded-lg p-0.5">
+                <button
+                  onClick={() => setPasteMode("rewrite")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    pasteMode === "rewrite" ? "bg-white text-amber-900 shadow-sm" : "text-amber-700 hover:text-amber-900"
+                  }`}
+                >
+                  AI herschrijven
+                </button>
+                <button
+                  onClick={() => setPasteMode("import")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    pasteMode === "import" ? "bg-white text-amber-900 shadow-sm" : "text-amber-700 hover:text-amber-900"
+                  }`}
+                >
+                  Importeren zonder aanpassing
+                </button>
+              </div>
+            </div>
+
             <p className="text-sm font-medium text-amber-800 mb-2">
-              Plak de tekst die je wil laten herschrijven:
+              {pasteMode === "rewrite"
+                ? "Plak de tekst die je wil laten herschrijven:"
+                : "Plak de tekst die je wil importeren (wordt niet aangepast):"}
             </p>
             <textarea
               value={rewriteText}
               onChange={(e) => setRewriteText(e.target.value)}
-              placeholder="Plak hier je bestaande tekst..."
+              placeholder={pasteMode === "rewrite" ? "Plak hier je bestaande tekst..." : "Plak hier je tekst..."}
               className="w-full h-32 p-3 text-sm border border-amber-300 rounded-lg bg-white resize-none focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
             {rewriteError && (
               <p className="text-sm text-red-600 mt-1">{rewriteError}</p>
             )}
-            <div className="flex items-center gap-2 mt-3">
-              <span className="text-xs font-medium text-amber-800">Lengte:</span>
-              <div className="flex gap-1 bg-amber-100 rounded-lg p-0.5">
-                {([
-                  { value: "same", label: "Houd lengte" },
-                  { value: "kort", label: "Kort" },
-                  { value: "medium", label: "Medium" },
-                  { value: "lang", label: "Lang" },
-                ] as { value: RewriteLength; label: string }[]).map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setRewriteLength(opt.value)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                      rewriteLength === opt.value
-                        ? "bg-white text-amber-900 shadow-sm"
-                        : "text-amber-700 hover:text-amber-900"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+
+            {/* Length picker — alleen bij herschrijven */}
+            {pasteMode === "rewrite" && (
+              <div className="flex items-center gap-2 mt-3">
+                <span className="text-xs font-medium text-amber-800">Lengte:</span>
+                <div className="flex gap-1 bg-amber-100 rounded-lg p-0.5">
+                  {([
+                    { value: "same", label: "Houd lengte" },
+                    { value: "kort", label: "Kort" },
+                    { value: "medium", label: "Medium" },
+                    { value: "lang", label: "Lang" },
+                  ] as { value: RewriteLength; label: string }[]).map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setRewriteLength(opt.value)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                        rewriteLength === opt.value
+                          ? "bg-white text-amber-900 shadow-sm"
+                          : "text-amber-700 hover:text-amber-900"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+
             <div className="flex gap-2 mt-2">
-              <button
-                onClick={rewriteContent}
-                disabled={!rewriteText.trim() || rewriting}
-                className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                {rewriting ? (
-                  <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 12h4z" /></svg>Herschrijven...</>
-                ) : (
-                  "Herschrijf tekst"
-                )}
-              </button>
+              {pasteMode === "rewrite" ? (
+                <button
+                  onClick={rewriteContent}
+                  disabled={!rewriteText.trim() || rewriting}
+                  className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {rewriting ? (
+                    <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 12h4z" /></svg>Herschrijven...</>
+                  ) : (
+                    "Herschrijf tekst"
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (!rewriteText.trim()) return;
+                    setContent(rewriteText);
+                    setShowRewrite(false);
+                    setRewriteText("");
+                    setRewriteError(null);
+                  }}
+                  disabled={!rewriteText.trim()}
+                  className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Importeer tekst
+                </button>
+              )}
               <button
                 onClick={() => { setShowRewrite(false); setRewriteText(""); setRewriteError(null); }}
                 className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:text-gray-800 border border-gray-300 hover:bg-gray-50 transition-colors"
