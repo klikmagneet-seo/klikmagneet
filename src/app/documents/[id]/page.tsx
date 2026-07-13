@@ -3,6 +3,79 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import RichTextEditor, { RichTextEditorHandle } from "@/components/RichTextEditor";
+
+// ---------------------------------------------------------------------------
+// Markdown → HTML converter (for AI-generated content)
+// ---------------------------------------------------------------------------
+
+function inlineHtml(text: string): string {
+  return text
+    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/_(.+?)_/g, "<em>$1</em>")
+    .replace(/`(.+?)`/g, "<code>$1</code>");
+}
+
+function mdToHtml(md: string): string {
+  const lines = md.split("\n");
+  const result: string[] = [];
+  let inUl = false;
+  let inOl = false;
+
+  for (const line of lines) {
+    if (line.startsWith("# ")) {
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      if (inOl) { result.push("</ol>"); inOl = false; }
+      result.push(`<h1>${inlineHtml(line.slice(2).trim())}</h1>`);
+    } else if (line.startsWith("## ")) {
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      if (inOl) { result.push("</ol>"); inOl = false; }
+      result.push(`<h2>${inlineHtml(line.slice(3).trim())}</h2>`);
+    } else if (line.startsWith("### ")) {
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      if (inOl) { result.push("</ol>"); inOl = false; }
+      result.push(`<h3>${inlineHtml(line.slice(4).trim())}</h3>`);
+    } else if (/^[-*] /.test(line)) {
+      if (inOl) { result.push("</ol>"); inOl = false; }
+      if (!inUl) { result.push("<ul>"); inUl = true; }
+      result.push(`<li>${inlineHtml(line.slice(2))}</li>`);
+    } else if (/^\d+\. /.test(line)) {
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      if (!inOl) { result.push("<ol>"); inOl = true; }
+      result.push(`<li>${inlineHtml(line.replace(/^\d+\. /, ""))}</li>`);
+    } else if (line.trim() === "") {
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      if (inOl) { result.push("</ol>"); inOl = false; }
+    } else {
+      if (inUl) { result.push("</ul>"); inUl = false; }
+      if (inOl) { result.push("</ol>"); inOl = false; }
+      result.push(`<p>${inlineHtml(line)}</p>`);
+    }
+  }
+
+  if (inUl) result.push("</ul>");
+  if (inOl) result.push("</ol>");
+
+  return result.join("\n");
+}
+
+function isHtml(s: string): boolean {
+  return s.trimStart().startsWith("<");
+}
+
+function textToHtml(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((para) => `<p>${para.replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+}
+
+function countWordsInHtml(html: string): number {
+  const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return text ? text.split(" ").filter(Boolean).length : 0;
+}
 
 interface Brief {
   subtopics: string[];
@@ -70,7 +143,9 @@ export default function DocumentEditor() {
   const [document, setDocument] = useState<Document | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(""); // current HTML (synced from editor onChange)
+  const [initialHtml, setInitialHtml] = useState(""); // loaded once on fetch
+  const [streamBuffer, setStreamBuffer] = useState(""); // raw markdown during streaming
   const [title, setTitle] = useState("");
 
   // Brief editing
@@ -130,7 +205,8 @@ export default function DocumentEditor() {
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [schemaCopied, setSchemaCopied] = useState(false);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<RichTextEditorHandle>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocument = useCallback(async () => {
@@ -146,8 +222,11 @@ export default function DocumentEditor() {
       }
       const data = await response.json();
       setDocument(data);
-      setContent(data.content || "");
       setTitle(data.title || "");
+      const raw = data.content || "";
+      const html = raw ? (isHtml(raw) ? raw : mdToHtml(raw)) : "";
+      setContent(html);
+      setInitialHtml(html);
       if (data.brief) {
         setEditedBrief(data.brief);
       }
@@ -255,7 +334,7 @@ export default function DocumentEditor() {
   async function generateContent() {
     setGenerateError(null);
     setGeneratingContent(true);
-    setContent("");
+    setStreamBuffer("");
     try {
       const response = await fetch(`/api/documents/${id}/generate`, {
         method: "POST",
@@ -276,13 +355,18 @@ export default function DocumentEditor() {
         const { done, value } = await reader.read();
         if (done) break;
         accumulated += decoder.decode(value, { stream: true });
-        setContent(accumulated);
-        if (textareaRef.current) {
-          textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+        setStreamBuffer(accumulated);
+        if (streamRef.current) {
+          streamRef.current.scrollTop = streamRef.current.scrollHeight;
         }
       }
+
+      const html = mdToHtml(accumulated);
+      setStreamBuffer("");
+      setContent(html);
+      editorRef.current?.setHTML(html);
       setDocument((prev) =>
-        prev ? { ...prev, content: accumulated, status: "in_review" } : null
+        prev ? { ...prev, content: html, status: "in_review" } : null
       );
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : "Onbekende fout");
@@ -295,7 +379,7 @@ export default function DocumentEditor() {
     if (!rewriteText.trim()) return;
     setRewriteError(null);
     setRewriting(true);
-    setContent("");
+    setStreamBuffer("");
     try {
       const response = await fetch(`/api/documents/${id}/rewrite`, {
         method: "POST",
@@ -316,11 +400,16 @@ export default function DocumentEditor() {
         const { done, value } = await reader.read();
         if (done) break;
         accumulated += decoder.decode(value, { stream: true });
-        setContent(accumulated);
-        if (textareaRef.current) {
-          textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+        setStreamBuffer(accumulated);
+        if (streamRef.current) {
+          streamRef.current.scrollTop = streamRef.current.scrollHeight;
         }
       }
+
+      const html = mdToHtml(accumulated);
+      setStreamBuffer("");
+      setContent(html);
+      editorRef.current?.setHTML(html);
       setShowRewrite(false);
       setRewriteText("");
     } catch (err) {
@@ -365,10 +454,11 @@ export default function DocumentEditor() {
     setSaveSuccess(false);
     setSaveError(null);
     try {
+      const currentHtml = editorRef.current?.getHTML() ?? content;
       const response = await fetch(`/api/documents/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, title }),
+        body: JSON.stringify({ content: currentHtml, title }),
       });
       if (!response.ok) {
         const data = await response.json();
@@ -691,7 +781,10 @@ export default function DocumentEditor() {
               <button
                 onClick={() => {
                   if (!importText.trim()) return;
-                  setContent(importText);
+                  const html = isHtml(importText) ? importText : mdToHtml(importText);
+                  setContent(html);
+                  setInitialHtml(html);
+                  editorRef.current?.setHTML(html);
                   setShowImport(false);
                   setImportText("");
                 }}
@@ -799,7 +892,10 @@ export default function DocumentEditor() {
                 <button
                   onClick={() => {
                     if (!rewriteText.trim()) return;
-                    setContent(rewriteText);
+                    const html = isHtml(rewriteText) ? rewriteText : mdToHtml(rewriteText);
+                    setContent(html);
+                    setInitialHtml(html);
+                    editorRef.current?.setHTML(html);
                     setShowRewrite(false);
                     setRewriteText("");
                     setRewriteError(null);
@@ -839,36 +935,33 @@ export default function DocumentEditor() {
               {rewriting ? "AI herschrijft de tekst..." : "AI schrijft het artikel..."} Dit kan 30–60 seconden duren.
             </div>
           )}
-          <div className="flex-1 overflow-auto p-6">
-            {content || generatingContent || rewriting ? (
-              <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                disabled={generatingContent || rewriting}
-                className="w-full h-full min-h-[600px] p-4 border border-gray-200 rounded-xl text-gray-900 text-sm leading-relaxed font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none bg-white"
-                placeholder="Gegenereerde tekst verschijnt hier..."
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-2">Geen inhoud</h3>
-                <p className="text-gray-500 text-sm max-w-sm">
-                  {!brief
-                    ? 'Klik op "Genereer brief" om te beginnen, of gebruik "Herschrijf" om bestaande tekst te verbeteren.'
-                    : 'Klik op "Genereer tekst" of gebruik "Herschrijf" om bestaande tekst te verbeteren.'}
-                </p>
+          <div className="flex-1 overflow-hidden p-6 flex flex-col">
+            {/* Streaming overlay — shown while AI is generating */}
+            {(generatingContent || rewriting) ? (
+              <div
+                ref={streamRef}
+                className="flex-1 min-h-[600px] p-4 border border-indigo-200 rounded-xl bg-indigo-50/50 overflow-auto font-mono text-sm text-gray-700 leading-relaxed whitespace-pre-wrap"
+              >
+                {streamBuffer || <span className="text-gray-400 italic">AI schrijft...</span>}
               </div>
+            ) : (
+              <RichTextEditor
+                ref={editorRef}
+                initialContent={initialHtml}
+                onChange={(html) => setContent(html)}
+                placeholder={
+                  !brief
+                    ? 'Klik op "Genereer brief" om te beginnen, of plak je eigen tekst via "Eigen tekst".'
+                    : 'Klik op "Genereer tekst" om het artikel te genereren.'
+                }
+                className="flex-1 min-h-[600px]"
+              />
             )}
           </div>
-          {content && (
-            <div className="px-6 py-2 border-t border-gray-100 bg-gray-50">
+          {content && !generatingContent && !rewriting && (
+            <div className="px-6 py-2 border-t border-gray-100 bg-gray-50 flex-shrink-0">
               <span className="text-xs text-gray-500">
-                {content.trim().split(/\s+/).filter(Boolean).length} woorden • {content.length} tekens
+                {countWordsInHtml(content)} woorden
               </span>
             </div>
           )}

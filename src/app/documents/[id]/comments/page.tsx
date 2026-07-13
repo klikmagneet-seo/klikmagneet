@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
@@ -34,34 +34,54 @@ interface DocumentInfo {
   content: string;
 }
 
-interface ContentSegment {
-  text: string;
-  isHighlight: boolean;
-  commentIndex?: number;
-  commentId?: string;
+// ---------------------------------------------------------------------------
+// HTML highlight injection
+// ---------------------------------------------------------------------------
+
+function wrapFirstTextOccurrence(
+  node: Node,
+  text: string,
+  commentId: string,
+  index: number
+): boolean {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const content = node.textContent || "";
+    const i = content.indexOf(text);
+    if (i === -1) return false;
+    const d = node.ownerDocument!;
+    const mark = d.createElement("mark");
+    mark.setAttribute("data-comment-id", commentId);
+    mark.setAttribute("data-index", String(index));
+    mark.className = "comment-mark";
+    mark.textContent = text;
+    const parent = node.parentNode!;
+    if (i > 0) parent.insertBefore(d.createTextNode(content.slice(0, i)), node);
+    parent.insertBefore(mark, node);
+    if (i + text.length < content.length)
+      parent.insertBefore(d.createTextNode(content.slice(i + text.length)), node);
+    parent.removeChild(node);
+    return true;
+  }
+  if (node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName !== "MARK") {
+    for (const child of Array.from(node.childNodes)) {
+      if (wrapFirstTextOccurrence(child, text, commentId, index)) return true;
+    }
+  }
+  return false;
 }
 
-function buildSegments(content: string, comments: Comment[]): ContentSegment[] {
-  if (comments.length === 0) return [{ text: content, isHighlight: false }];
-
-  const sorted: Comment[] = [];
-  let cursor = 0;
-  for (const c of [...comments].sort((a, b) => a.startOffset - b.startOffset)) {
-    if (c.startOffset < 0 || c.endOffset > content.length || c.startOffset >= c.endOffset) continue;
-    if (c.startOffset < cursor) continue;
-    sorted.push(c);
-    cursor = c.endOffset;
-  }
-
-  const segments: ContentSegment[] = [];
-  let pos = 0;
-  sorted.forEach((c, idx) => {
-    if (c.startOffset > pos) segments.push({ text: content.slice(pos, c.startOffset), isHighlight: false });
-    segments.push({ text: content.slice(c.startOffset, c.endOffset), isHighlight: true, commentIndex: idx + 1, commentId: c.id });
-    pos = c.endOffset;
+function buildAnnotatedHtml(
+  html: string,
+  comments: Comment[],
+  getIndex: (id: string) => number
+): string {
+  if (typeof window === "undefined" || !html) return html || "";
+  const doc = new DOMParser().parseFromString(html || "<p></p>", "text/html");
+  comments.forEach((c) => {
+    if (c.selectedText?.trim())
+      wrapFirstTextOccurrence(doc.body, c.selectedText, c.id, getIndex(c.id));
   });
-  if (pos < content.length) segments.push({ text: content.slice(pos), isHighlight: false });
-  return segments;
+  return doc.body.innerHTML;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +285,7 @@ export default function CommentsPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -388,7 +409,29 @@ export default function CommentsPage() {
   const openComments = comments.filter((c) => c.status === "open");
   const resolvedComments = comments.filter((c) => c.status === "resolved");
   const allCommentsSorted = [...openComments, ...resolvedComments];
-  const segments = docInfo ? buildSegments(docInfo.content, allCommentsSorted) : [];
+
+  const annotatedHtml = useMemo(() => {
+    if (!docInfo?.content) return "";
+    return buildAnnotatedHtml(
+      docInfo.content,
+      allCommentsSorted,
+      (id) => allCommentsSorted.findIndex((c) => c.id === id) + 1
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docInfo?.content, comments]);
+
+  // Update active mark styling without re-computing HTML
+  useEffect(() => {
+    if (!previewRef.current) return;
+    previewRef.current
+      .querySelectorAll(".comment-mark[data-active]")
+      .forEach((m) => m.removeAttribute("data-active"));
+    if (activeCommentId) {
+      previewRef.current
+        .querySelector(`.comment-mark[data-comment-id="${activeCommentId}"]`)
+        ?.setAttribute("data-active", "true");
+    }
+  }, [activeCommentId, annotatedHtml]);
 
   return (
     <div className="flex flex-col h-full">
@@ -433,29 +476,25 @@ export default function CommentsPage() {
           {/* Left: annotated document */}
           <div className="flex-1 overflow-auto bg-gray-50 border-r border-gray-200 p-6">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Document met opmerkingen</p>
-            <div className="bg-white border border-gray-200 rounded-xl p-6">
-              <pre className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
-                {segments.map((seg, i) => {
-                  if (!seg.isHighlight) return <span key={i}>{seg.text}</span>;
-                  const isActive = activeCommentId === seg.commentId;
-                  return (
-                    <mark
-                      key={i}
-                      onClick={() => {
-                        setActiveCommentId(seg.commentId ?? null);
-                        if (seg.commentId) {
-                          globalThis.document?.getElementById(`comment-${seg.commentId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                        }
-                      }}
-                      className={`cursor-pointer rounded px-0.5 inline-block transition-colors ${isActive ? "bg-yellow-300 ring-2 ring-yellow-400" : "bg-yellow-100 hover:bg-yellow-200"}`}
-                      title={`Opmerking ${seg.commentIndex}`}
-                    >
-                      {seg.text}
-                      <sup className="text-yellow-700 font-bold text-[10px] ml-0.5">{seg.commentIndex}</sup>
-                    </mark>
-                  );
-                })}
-              </pre>
+            <div
+              className="bg-white border border-gray-200 rounded-xl p-6"
+              onClick={(e) => {
+                const mark = (e.target as Element).closest(".comment-mark");
+                if (!mark) return;
+                const commentId = mark.getAttribute("data-comment-id");
+                setActiveCommentId(activeCommentId === commentId ? null : commentId);
+                if (commentId) {
+                  globalThis.document
+                    ?.getElementById(`comment-${commentId}`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+              }}
+            >
+              <div
+                ref={previewRef}
+                className="article-body text-sm"
+                dangerouslySetInnerHTML={{ __html: annotatedHtml }}
+              />
             </div>
           </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 
 interface ReviewDocument {
@@ -28,6 +28,10 @@ interface SelectionState {
   rect: DOMRect;
 }
 
+// ---------------------------------------------------------------------------
+// DOM helpers — char offset for recording new selections
+// ---------------------------------------------------------------------------
+
 function getCharOffset(container: Element, node: Node, offset: number): number {
   const range = document.createRange();
   range.setStart(container, 0);
@@ -35,45 +39,61 @@ function getCharOffset(container: Element, node: Node, offset: number): number {
   return range.toString().length;
 }
 
-interface ContentSegment {
-  text: string;
-  isHighlight: boolean;
-  comment?: ReviewComment;
-}
+// ---------------------------------------------------------------------------
+// HTML highlight injection — wraps first occurrence of selectedText with <mark>
+// ---------------------------------------------------------------------------
 
-function buildSegments(content: string, comments: ReviewComment[]): ContentSegment[] {
-  if (comments.length === 0) {
-    return [{ text: content, isHighlight: false }];
+function wrapFirstTextOccurrence(
+  node: Node,
+  text: string,
+  commentId: string,
+  index: number
+): boolean {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const content = node.textContent || "";
+    const i = content.indexOf(text);
+    if (i === -1) return false;
+    const d = node.ownerDocument!;
+    const mark = d.createElement("mark");
+    mark.setAttribute("data-comment-id", commentId);
+    mark.setAttribute("data-index", String(index));
+    mark.className = "comment-mark";
+    mark.textContent = text;
+    const parent = node.parentNode!;
+    if (i > 0) parent.insertBefore(d.createTextNode(content.slice(0, i)), node);
+    parent.insertBefore(mark, node);
+    if (i + text.length < content.length)
+      parent.insertBefore(d.createTextNode(content.slice(i + text.length)), node);
+    parent.removeChild(node);
+    return true;
   }
-
-  // Sort by startOffset, skip out-of-bounds and overlapping
-  const valid: ReviewComment[] = [];
-  let cursor = 0;
-  for (const c of [...comments].sort((a, b) => a.startOffset - b.startOffset)) {
-    if (c.startOffset < 0 || c.endOffset > content.length || c.startOffset >= c.endOffset) continue;
-    if (c.startOffset < cursor) continue; // overlapping — skip
-    valid.push(c);
-    cursor = c.endOffset;
-  }
-
-  const segments: ContentSegment[] = [];
-  let pos = 0;
-  for (const c of valid) {
-    if (c.startOffset > pos) {
-      segments.push({ text: content.slice(pos, c.startOffset), isHighlight: false });
+  if (
+    node.nodeType === Node.ELEMENT_NODE &&
+    (node as Element).tagName !== "MARK"
+  ) {
+    for (const child of Array.from(node.childNodes)) {
+      if (wrapFirstTextOccurrence(child, text, commentId, index)) return true;
     }
-    segments.push({
-      text: content.slice(c.startOffset, c.endOffset),
-      isHighlight: true,
-      comment: c,
-    });
-    pos = c.endOffset;
   }
-  if (pos < content.length) {
-    segments.push({ text: content.slice(pos), isHighlight: false });
-  }
-  return segments;
+  return false;
 }
+
+function buildAnnotatedHtml(
+  html: string,
+  comments: ReviewComment[]
+): string {
+  if (typeof window === "undefined" || !html) return html || "";
+  const doc = new DOMParser().parseFromString(html || "<p></p>", "text/html");
+  comments.forEach((c, i) => {
+    if (c.selectedText?.trim())
+      wrapFirstTextOccurrence(doc.body, c.selectedText, c.id, i + 1);
+  });
+  return doc.body.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
 
 export default function ReviewPage() {
   const params = useParams();
@@ -93,6 +113,7 @@ export default function ReviewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+  const [tooltipRect, setTooltipRect] = useState<DOMRect | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -119,34 +140,69 @@ export default function ReviewPage() {
     fetchReview();
   }, [fetchReview]);
 
+  // Rebuild annotated HTML whenever content or comments change
+  const annotatedHtml = useMemo(
+    () => buildAnnotatedHtml(reviewDoc?.content || "", comments),
+    [reviewDoc?.content, comments]
+  );
+
+  // Update active mark styling via direct DOM attribute (avoids full re-render)
+  useEffect(() => {
+    if (!contentRef.current) return;
+    contentRef.current
+      .querySelectorAll(".comment-mark[data-active]")
+      .forEach((m) => m.removeAttribute("data-active"));
+    if (activeTooltip) {
+      contentRef.current
+        .querySelector(`.comment-mark[data-comment-id="${activeTooltip}"]`)
+        ?.setAttribute("data-active", "true");
+    }
+  }, [activeTooltip, annotatedHtml]);
+
   function handleMouseUp() {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !contentRef.current) {
       setSelection(null);
       return;
     }
-
     const selectedText = sel.toString();
     if (!selectedText.trim()) {
       setSelection(null);
       return;
     }
-
     const range = sel.getRangeAt(0);
     const container = contentRef.current;
-
-    // Check that selection is within our content container
     if (!container.contains(range.commonAncestorContainer)) {
       setSelection(null);
       return;
     }
-
     const startOffset = getCharOffset(container, range.startContainer, range.startOffset);
     const endOffset = getCharOffset(container, range.endContainer, range.endOffset);
     const rect = range.getBoundingClientRect();
-
     setSelection({ startOffset, endOffset, selectedText, rect });
     setShowForm(false);
+    setActiveTooltip(null);
+  }
+
+  function handleContentClick(e: React.MouseEvent<HTMLDivElement>) {
+    const mark = (e.target as Element).closest(".comment-mark");
+    if (mark) {
+      const commentId = mark.getAttribute("data-comment-id");
+      const rect = mark.getBoundingClientRect();
+      if (activeTooltip === commentId) {
+        setActiveTooltip(null);
+        setTooltipRect(null);
+      } else {
+        setActiveTooltip(commentId);
+        setTooltipRect(rect);
+      }
+      // Clear text selection when clicking a mark
+      window.getSelection()?.removeAllRanges();
+      setSelection(null);
+    } else {
+      setActiveTooltip(null);
+      setTooltipRect(null);
+    }
   }
 
   async function submitComment() {
@@ -225,7 +281,7 @@ export default function ReviewPage() {
 
   if (!reviewDoc) return null;
 
-  const segments = buildSegments(reviewDoc.content, comments);
+  const activeComment = comments.find((c) => c.id === activeTooltip);
 
   return (
     <div className="min-h-screen bg-white">
@@ -262,51 +318,18 @@ export default function ReviewPage() {
         </div>
       )}
 
-      {/* Content */}
+      {/* Article content */}
       <div className="max-w-3xl mx-auto px-6 py-10 relative">
         <div
           ref={contentRef}
           onMouseUp={handleMouseUp}
-          className="text-gray-800 text-lg leading-relaxed whitespace-pre-wrap select-text font-serif"
+          onClick={handleContentClick}
+          className="article-body text-lg select-text"
           style={{ userSelect: "text" }}
-        >
-          {segments.map((seg, i) =>
-            seg.isHighlight && seg.comment ? (
-              <mark
-                key={i}
-                className="bg-yellow-200 hover:bg-yellow-300 cursor-pointer rounded-sm relative transition-colors"
-                style={{ backgroundColor: "rgb(254 240 138)", padding: "1px 0" }}
-                onClick={() =>
-                  setActiveTooltip(activeTooltip === seg.comment!.id ? null : seg.comment!.id)
-                }
-              >
-                {seg.text}
-                {activeTooltip === seg.comment.id && (
-                  <span
-                    className="absolute z-20 bottom-full left-0 mb-2 w-64 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-lg"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {seg.comment.authorName && (
-                      <span className="font-semibold block mb-1">{seg.comment.authorName}</span>
-                    )}
-                    <span className="block">{seg.comment.commentText}</span>
-                    <span className="block mt-1 text-gray-400 text-[11px]">
-                      {new Date(seg.comment.createdAt).toLocaleDateString("nl-NL", {
-                        day: "numeric",
-                        month: "long",
-                        year: "numeric",
-                      })}
-                    </span>
-                  </span>
-                )}
-              </mark>
-            ) : (
-              <span key={i}>{seg.text}</span>
-            )
-          )}
-        </div>
+          dangerouslySetInnerHTML={{ __html: annotatedHtml }}
+        />
 
-        {/* Floating add-comment button */}
+        {/* Floating "add comment" button */}
         {selection && !showForm && (
           <div
             className="fixed z-30"
@@ -317,7 +340,7 @@ export default function ReviewPage() {
           >
             <button
               onMouseDown={(e) => {
-                e.preventDefault(); // don't lose selection
+                e.preventDefault();
                 setShowForm(true);
               }}
               className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-lg transition-colors flex items-center gap-2 whitespace-nowrap"
@@ -330,7 +353,32 @@ export default function ReviewPage() {
           </div>
         )}
 
-        {/* Comment form */}
+        {/* Floating comment tooltip */}
+        {activeComment && tooltipRect && (
+          <div
+            className="fixed z-20 w-72 bg-gray-900 text-white text-xs rounded-xl p-4 shadow-xl"
+            style={{
+              top: tooltipRect.top + window.scrollY - 8,
+              left: tooltipRect.left,
+              transform: "translateY(-100%)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {activeComment.authorName && (
+              <p className="font-semibold mb-1">{activeComment.authorName}</p>
+            )}
+            <p>{activeComment.commentText}</p>
+            <p className="mt-2 text-gray-400 text-[11px]">
+              {new Date(activeComment.createdAt).toLocaleDateString("nl-NL", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
+            </p>
+          </div>
+        )}
+
+        {/* Comment form modal */}
         {showForm && selection && (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 px-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
@@ -401,7 +449,7 @@ export default function ReviewPage() {
       {activeTooltip && (
         <div
           className="fixed inset-0 z-10"
-          onClick={() => setActiveTooltip(null)}
+          onClick={() => { setActiveTooltip(null); setTooltipRect(null); }}
         />
       )}
     </div>
