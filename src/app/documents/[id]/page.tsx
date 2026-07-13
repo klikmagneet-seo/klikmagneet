@@ -104,6 +104,10 @@ export default function DocumentEditor() {
   const [rewriteText, setRewriteText] = useState("");
   const [rewriteError, setRewriteError] = useState<string | null>(null);
 
+  // Direct import (own text)
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+
   // Review sharing
   const [reviewUrl, setReviewUrl] = useState<string | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -535,9 +539,25 @@ export default function DocumentEditor() {
               <option value="published">Gepubliceerd</option>
             </select>
 
+            {/* Direct import toggle */}
+            <button
+              onClick={() => { setShowImport(!showImport); setShowRewrite(false); }}
+              disabled={isWorking}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                showImport
+                  ? "bg-green-50 border-green-300 text-green-700"
+                  : "border-gray-300 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Eigen tekst
+            </button>
+
             {/* Rewrite toggle */}
             <button
-              onClick={() => setShowRewrite(!showRewrite)}
+              onClick={() => { setShowRewrite(!showRewrite); setShowImport(false); }}
               disabled={isWorking}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
                 showRewrite
@@ -653,6 +673,46 @@ export default function DocumentEditor() {
           </div>
         )}
       </div>
+
+      {/* Direct import panel */}
+      {showImport && (
+        <div className="bg-green-50 border-b border-green-200 px-6 py-4">
+          <div className="max-w-4xl">
+            <p className="text-sm font-medium text-green-800 mb-2">
+              Plak je eigen tekst — wordt 1:1 overgenomen, niets aangepast:
+            </p>
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder="Plak hier je tekst..."
+              className="w-full h-40 p-3 text-sm border border-green-300 rounded-lg bg-white resize-none focus:outline-none focus:ring-2 focus:ring-green-400"
+            />
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => {
+                  if (!importText.trim()) return;
+                  setContent(importText);
+                  setShowImport(false);
+                  setImportText("");
+                }}
+                disabled={!importText.trim()}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                Importeer tekst
+              </button>
+              <button
+                onClick={() => { setShowImport(false); setImportText(""); }}
+                className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:text-gray-800 border border-gray-300 hover:bg-gray-50 transition-colors"
+              >
+                Annuleren
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Rewrite / import panel */}
       {showRewrite && (
