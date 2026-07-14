@@ -381,6 +381,33 @@ export default function CommentsPage() {
     }
   }
 
+  const openComments = comments.filter((c) => c.status === "open");
+  const resolvedComments = comments.filter((c) => c.status === "resolved");
+  const allCommentsSorted = [...openComments, ...resolvedComments];
+
+  const annotatedHtml = useMemo(() => {
+    if (!docInfo?.content) return "";
+    const sorted = [...comments.filter((c) => c.status === "open"), ...comments.filter((c) => c.status === "resolved")];
+    return buildAnnotatedHtml(
+      docInfo.content,
+      sorted,
+      (id) => sorted.findIndex((c) => c.id === id) + 1
+    );
+  }, [docInfo?.content, comments]);
+
+  // Update active mark styling without re-computing HTML
+  useEffect(() => {
+    if (!previewRef.current) return;
+    previewRef.current
+      .querySelectorAll(".comment-mark[data-active]")
+      .forEach((m) => m.removeAttribute("data-active"));
+    if (activeCommentId) {
+      previewRef.current
+        .querySelector(`.comment-mark[data-comment-id="${activeCommentId}"]`)
+        ?.setAttribute("data-active", "true");
+    }
+  }, [activeCommentId, annotatedHtml]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[300px]">
@@ -405,33 +432,6 @@ export default function CommentsPage() {
       </div>
     );
   }
-
-  const openComments = comments.filter((c) => c.status === "open");
-  const resolvedComments = comments.filter((c) => c.status === "resolved");
-  const allCommentsSorted = [...openComments, ...resolvedComments];
-
-  const annotatedHtml = useMemo(() => {
-    if (!docInfo?.content) return "";
-    return buildAnnotatedHtml(
-      docInfo.content,
-      allCommentsSorted,
-      (id) => allCommentsSorted.findIndex((c) => c.id === id) + 1
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docInfo?.content, comments]);
-
-  // Update active mark styling without re-computing HTML
-  useEffect(() => {
-    if (!previewRef.current) return;
-    previewRef.current
-      .querySelectorAll(".comment-mark[data-active]")
-      .forEach((m) => m.removeAttribute("data-active"));
-    if (activeCommentId) {
-      previewRef.current
-        .querySelector(`.comment-mark[data-comment-id="${activeCommentId}"]`)
-        ?.setAttribute("data-active", "true");
-    }
-  }, [activeCommentId, annotatedHtml]);
 
   return (
     <div className="flex flex-col h-full">
