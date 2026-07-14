@@ -3,7 +3,7 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
-import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
 
 export interface RichTextEditorHandle {
   getHTML: () => string;
@@ -20,6 +20,11 @@ interface Props {
 
 const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
   ({ initialContent = "", onChange, disabled = false, placeholder, className = "" }, ref) => {
+    // Prevent SSR: render nothing until we're on the client.
+    // This avoids hydration mismatches and any browser-only TipTap code.
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => { setMounted(true); }, []);
+
     const editor = useEditor({
       extensions: [
         StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -37,26 +42,43 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(
       () => ({
         getHTML: () => editor?.getHTML() ?? "",
         setHTML: (html: string) => {
-          editor?.commands.setContent(html);
+          try {
+            editor?.commands.setContent(html || "<p></p>");
+          } catch {
+            // ignore if editor not ready
+          }
         },
       }),
       [editor]
     );
 
+    // editable state — TipTap 3 uses setOptions, TipTap 2 uses setEditable
     useEffect(() => {
-      editor?.setEditable(!disabled);
+      if (!editor) return;
+      try {
+        if (typeof (editor as any).setEditable === "function") {
+          (editor as any).setEditable(!disabled);
+        } else {
+          editor.setOptions({ editable: !disabled });
+        }
+      } catch {
+        // ignore
+      }
     }, [editor, disabled]);
 
-    // Sync external content changes (import, streaming completion) into the editor.
-    // Only fires when `initialContent` actually changes, not on every re-render.
+    // Sync external content changes (import, streaming end) into the editor.
     const prevContent = useRef(initialContent);
     useEffect(() => {
       if (!editor || initialContent === prevContent.current) return;
       prevContent.current = initialContent;
-      editor.commands.setContent(initialContent);
+      try {
+        editor.commands.setContent(initialContent || "<p></p>");
+      } catch {
+        // ignore
+      }
     }, [editor, initialContent]);
 
-    if (!editor) return null;
+    if (!mounted || !editor) return null;
 
     return (
       <div
